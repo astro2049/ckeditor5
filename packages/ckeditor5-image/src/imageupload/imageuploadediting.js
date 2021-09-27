@@ -20,6 +20,7 @@ import ImageUtils from '../imageutils';
 import UploadImageCommand from './uploadimagecommand';
 import { fetchLocalImage, isLocalImage } from '../../src/imageupload/utils';
 import { createImageTypeRegExp } from './utils';
+import axios from 'axios'
 
 /**
  * The editing part of the image upload feature. It registers the `'uploadImage'` command
@@ -168,6 +169,37 @@ export default class ImageUploadEditing extends Plugin {
 			data.preventDefault();
 		} );
 
+		const additionalUploadImage = (imageElement) => {
+			let url = imageElement.getAttribute('src')
+
+		  	// return if the image is already on server
+		  	if (url.includes(process.env.SERVER_ADDRESS)) {
+				return
+		  	}
+
+		  	;(async () => {
+				let filename = url.split('/').pop().split('#')[0].split('?')[0] // extracts image's filename, see https://stackoverflow.com/a/36756650/15630163
+
+				let response = await axios.get(url, {
+				  	responseType: 'blob',
+				})
+				let blob = response.data
+
+				let formData = new FormData()
+				formData.append('upload', blob, filename) // form name and file name can be customized
+
+				let uploadResult = await axios.post(
+					process.env.SERVER_ADDRESS + '/files/upload', // route can be customized
+					formData,
+				)
+
+				// replace the image's url if it's successfully uploaded
+				if (uploadResult.status === 200) {
+					imageElement._attrs.set('src', uploadResult.data.url)
+				}
+			})()
+		}
+
 		// Upload placeholder images that appeared in the model.
 		doc.on( 'change', () => {
 			// Note: Reversing changes to start with insertions and only then handle removals. If it was the other way around,
@@ -184,6 +216,13 @@ export default class ImageUploadEditing extends Plugin {
 					for ( const imageElement of getImagesFromChangeItem( editor, item ) ) {
 						// Check if the image element still has upload id.
 						const uploadId = imageElement.getAttribute( 'uploadId' );
+						
+						// avoid executing our custom upload logic when:
+						// 1. the picture is being handled by original paste/click-to-upload logic, or
+						// 2. the image element is in graveyard, aka. just been deleted
+						if (!uploadId && !isInsertedInGraveyard) {
+						  	additionalUploadImage(imageElement)
+						}
 
 						if ( !uploadId ) {
 							continue;
